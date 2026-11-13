@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Game of Life · Capt. Craig's Workshop</title>
+<meta name="description" content="Conway's Game of Life on an endless board. Drop in gliders, glider guns, spaceships and methuselahs, zoom out as they grow, and follow them across the board.">
+<link rel="canonical" href="https://captcraig.net/life/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Capt. Craig's Workshop">
+<meta property="og:title" content="Game of Life">
+<meta property="og:description" content="Conway's Game of Life on an endless board: gliders, guns, spaceships and methuselahs.">
+<meta property="og:url" content="https://captcraig.net/life/">
+<meta name="theme-color" content="#14273e">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #14273e;
+    --navy-2: #1d3a5c;
+    --deep: #0e1d30;
+    --brass: #c9973f;
+    --cream: #e8d3a6;
+    --cell: #f0cf86;
+    --paper: #f4efe3;
+    --mist: #c8d4e0;
+    --muted: #8fa1b3;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--deep); color: #fff;
+    font-family: "Source Sans 3", system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---------- Title bar ---------- */
+  .titlebar {
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 100%);
+    padding: calc(10px + env(safe-area-inset-top)) calc(110px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    border-bottom: 2px solid var(--brass);
+  }
+  .titlebar h1 {
+    font-family: "Fraunces", Georgia, serif; font-weight: 800;
+    font-size: clamp(1.3rem, 3.6vw, 1.8rem); margin: 0; letter-spacing: .4px;
+  }
+  .titlebar h1 span { color: var(--brass); }
+  .wip {
+    font-size: .8rem; font-weight: 600; color: var(--navy);
+    background: var(--cream); border-radius: 999px; padding: 2px 10px;
+    white-space: nowrap;
+  }
+  .about-btn {
+    background: none; border: 1px solid rgba(232,211,166,.5); color: var(--cream);
+    border-radius: 999px; padding: 2px 11px; font: 600 .85rem "Source Sans 3", system-ui, sans-serif;
+    cursor: pointer;
+  }
+  .about-btn:hover { background: rgba(232,211,166,.12); }
+
+  /* ---------- Toolbar ---------- */
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
+    background: var(--navy);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .group { display: flex; align-items: center; gap: 6px; }
+  .toolbar button, .toolbar select {
+    font: 600 .95rem "Source Sans 3", system-ui, sans-serif;
+    color: var(--paper); background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px;
+    padding: 6px 11px; cursor: pointer; min-height: 34px;
+  }
+  .toolbar button:hover, .toolbar select:hover { background: rgba(255,255,255,.14); }
+  .toolbar button.on { background: var(--brass); border-color: var(--brass); color: var(--deep); }
+  .toolbar button.primary { min-width: 84px; }
+  .toolbar select { max-width: 230px; }
+  .toolbar select option, .toolbar select optgroup { color: #111; background: #fff; }
+  .toolbar label { font-size: .9rem; color: var(--mist); display: flex; align-items: center; gap: 6px; }
+  .toolbar input[type=range] { width: 110px; accent-color: var(--brass); }
+  #speedLabel { min-width: 58px; font-variant-numeric: tabular-nums; color: var(--cream); }
+  .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,.12); }
+  #rotateBtn, #flipBtn { display: none; }
+  body.stamping #rotateBtn, body.stamping #flipBtn { display: inline-block; }
+
+  /* ---------- Board ---------- */
+  .stage { position: relative; flex: 1; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  canvas.draw, canvas.stamp, canvas.follow { cursor: crosshair; }
+  canvas.dragging { cursor: grabbing; }
+
+  .stats {
+    position: absolute; left: calc(12px + env(safe-area-inset-left)); bottom: calc(12px + env(safe-area-inset-bottom));
+    background: rgba(14,29,48,.78); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 10px; padding: 6px 12px; font-size: .92rem; color: var(--mist);
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .stats b { color: var(--cream); font-weight: 600; }
+  .note {
+    position: absolute; right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: min(420px, calc(100% - 24px));
+    background: rgba(14,29,48,.86); border: 1px solid rgba(201,151,63,.45);
+    border-radius: 10px; padding: 8px 12px; font-size: .92rem; line-height: 1.35; color: var(--mist);
+    transition: opacity .4s;
+  }
+  .note strong { color: var(--cream); font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 1rem; }
+  .note.hidden { opacity: 0; pointer-events: none; }
+  @media (max-width: 640px) {
+    .titlebar { padding-right: calc(92px + env(safe-area-inset-right)); gap: 6px 8px; }
+    .titlebar h1 { font-size: 1.25rem; }
+    .wip, .about-btn { font-size: .75rem; }
+    /* one compact row that scrolls sideways, so the board keeps most of the screen */
+    .toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; scrollbar-width: none; }
+    .toolbar::-webkit-scrollbar { display: none; }
+    .toolbar button, .toolbar select { padding: 4px 9px; font-size: .88rem; min-height: 32px; white-space: nowrap; flex: none; }
+    .toolbar button.primary { min-width: 74px; }
+    .toolbar label { white-space: nowrap; flex: none; }
+    .toolbar .word { display: none; }
+    .toolbar input[type=range] { width: 76px; }
+    .sep { display: none; }
+    .note { left: 12px; bottom: calc(50px + env(safe-area-inset-bottom)); font-size: .85rem; }
+    .stats { font-size: .82rem; }
+  }
+
+  /* ---------- About panel ---------- */
+  .about {
+    position: fixed; inset: 0; background: rgba(6,14,24,.6); display: none;
+    align-items: center; justify-content: center; padding: 16px; z-index: 50;
+  }
+  .about.open { display: flex; }
+  .about .sheet {
+    background: var(--paper); color: #1e2a36; border-radius: 14px; max-width: 560px; width: 100%;
+    max-height: calc(100% - 32px); overflow: auto; padding: 22px 24px; box-shadow: 0 20px 50px rgba(0,0,0,.4);
+  }
+  .about h2 { font-family: "Fraunces", Georgia, serif; color: var(--navy); margin: 0 0 8px; font-size: 1.5rem; }
+  .about h3 { font-family: "Fraunces", Georgia, serif; color: var(--navy-2); margin: 16px 0 6px; font-size: 1.1rem; }
+  .about p, .about li { line-height: 1.45; color: #34414d; }
+  .about ul { padding-left: 20px; margin: 6px 0; }
+  .about kbd { background: #fff; border: 1px solid #cfc5ae; border-radius: 4px; padding: 0 5px; font-size: .85em; }
+  .about .close { float: right; background: none; border: 0; font-size: 1.6rem; cursor: pointer; color: var(--navy); line-height: 1; }
+
+  /* Home button (captcraig.net) — same as the other Workshop pages */
+  #cc-home{position:absolute;top:calc(12px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right));
+  z-index:9999;padding:5px 12px;border-radius:999px;font:600 14px/1.2 system-ui,-apple-system,sans-serif;
+  text-decoration:none;color:#14273e;background:rgba(255,255,255,.6);border:1px solid rgba(20,39,62,.3);
+  opacity:.8;transition:opacity .15s,background .15s}
+  #cc-home:hover,#cc-home:focus-visible{opacity:1;background:#fff}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <h1>Game of <span>Life</span></h1>
+  <span class="wip">on the workbench</span>
+  <button class="about-btn" id="aboutBtn">What is this?</button>
+</div>
+
+<div class="toolbar">
+  <div class="group">
+    <button id="runBtn" class="primary on">❚❚ Pause</button>
+    <button id="stepBtn" title="One generation (N)">Step</button>
+    <label><span class="word">Speed</span> <input id="speed" type="range" min="0" max="10" value="4"><span id="speedLabel"></span></label>
+  </div>
+  <div class="sep"></div>
+  <div class="group" role="group" aria-label="Tool">
+    <button data-tool="move" class="on" title="Drag to move around (M)">✋ Move</button>
+    <button data-tool="draw" title="Click or drag to add or remove cells (D)">✎ Draw</button>
+    <button data-tool="follow" title="Click a moving object to follow it">◎ Follow</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <select id="picker" aria-label="Patterns and scenes"></select>
+    <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
+    <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <button id="fitBtn" title="Show everything (Z)">Fit</button>
+    <button id="autoBtn" class="on" title="Keep zooming out so everything stays in view">Auto-zoom</button>
+    <button id="clearBtn">Clear</button>
+  </div>
+</div>
+
+<div class="stage" id="stage">
+  <canvas id="board"></canvas>
+  <div class="stats" id="stats"></div>
+  <div class="note" id="note"></div>
+</div>
+
+<div class="about" id="about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+  <div class="sheet">
+    <button class="close" id="aboutClose" aria-label="Close">×</button>
+    <h2 id="aboutTitle">Conway's Game of Life</h2>
+    <p>The mathematician John Horton Conway invented Life in 1970. Martin Gardner described it in his <em>Scientific American</em> column that October, and people everywhere started tracing it out on graph paper and on early computers. It isn't really a game, because nobody plays. You set up the board and watch what happens.</p>
+    <h3>The rules</h3>
+    <p>Every square is alive or dead. At each tick (one generation), every square counts its eight neighbours:</p>
+    <ul>
+      <li>A dead square with exactly <b>3</b> live neighbours is born.</li>
+      <li>A live square with <b>2 or 3</b> live neighbours survives.</li>
+      <li>Every other square is dead in the next generation, from loneliness or from overcrowding.</li>
+    </ul>
+    <p>Those three rules produce gliders that crawl across the board, guns that fire them forever, and tiny seeds that churn for thousands of generations before they settle.</p>
+    <h3>How to use it</h3>
+    <ul>
+      <li>Pick a pattern from the menu and click the board to drop it in. Use <kbd>R</kbd> to rotate it and <kbd>F</kbd> to flip it. Press <kbd>Esc</kbd> when you're done.</li>
+      <li>Scroll or pinch to zoom, and drag to move around. The board has no edges.</li>
+      <li><b>Draw</b> lets you add or remove single squares. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
+      <li><b>Auto-zoom</b> pulls back as the pattern grows, so nothing escapes the view.</li>
+      <li>Keys: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
+    </ul>
+    <h3>On the workbench</h3>
+    <p>This page is still being built, so expect changes. Coming next: bigger patterns such as puffers and breeders, plus a faster engine (Hashlife) for running them millions of generations ahead.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Engine: live cells kept in a Set of numeric keys, so the board is endless.
+   ===================================================================== */
+const OFF = 2 ** 25, SPAN = 2 ** 26;            // coordinates usable to about ±33 million
+const key = (x, y) => (x + OFF) * SPAN + (y + OFF);
+const kx = k => Math.floor(k / SPAN) - OFF;
+const ky = k => (k % SPAN) - OFF;
+const NBR = [];
+for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (dx || dy) NBR.push(dx * SPAN + dy);
+
+let live = new Set();
+let gen = 0;
+
+function step() {
+  const counts = new Map();
+  for (const k of live) {
+    for (let i = 0; i < 8; i++) {
+      const n = k + NBR[i];
+      counts.set(n, (counts.get(n) || 0) + 1);
+    }
+  }
+  const next = new Set();
+  for (const [k, c] of counts) if (c === 3 || (c === 2 && live.has(k))) next.add(k);
+  live = next;
+  gen++;
+}
+
+/* =====================================================================
+   Patterns (RLE format, the standard way Life patterns are shared)
+   ===================================================================== */
+function parseRLE(rle) {
+  const cells = [];
+  let x = 0, y = 0, num = '';
+  for (const ch of rle) {
+    if (ch >= '0' && ch <= '9') { num += ch; continue; }
+    const n = num ? parseInt(num, 10) : 1; num = '';
+    if (ch === 'b' || ch === '.') x += n;
+    else if (ch === '$') { y += n; x = 0; }
+    else if (ch === '!') break;
+    else if (/[a-z]/i.test(ch)) { for (let i = 0; i < n; i++) cells.push([x + i, y]); x += n; }
+  }
+  return cells;
+}
+function normalize(cells) {
+  let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity;
+  for (const [x, y] of cells) { mx = Math.min(mx, x); my = Math.min(my, y); Mx = Math.max(Mx, x); My = Math.max(My, y); }
+  return { cells: cells.map(([x, y]) => [x - mx, y - my]), w: Mx - mx + 1, h: My - my + 1 };
+}
+function orient(cells, rot = 0, flip = false) {
+  let c = cells.map(([x, y]) => [flip ? -x : x, y]);
+  for (let i = 0; i < ((rot % 4) + 4) % 4; i++) c = c.map(([x, y]) => [-y, x]);
+  return normalize(c);
+}
+
+const PATTERNS = [
+  { group: 'Spaceships', id: 'glider', name: 'Glider', rle: 'bob$2bo$3o!',
+    note: 'Found by Richard Guy in 1970. Five cells that crawl diagonally forever, one square every 4 generations.' },
+  { group: 'Spaceships', id: 'lwss', name: 'Lightweight spaceship', rle: 'bo2bo$o4b$o3bo$4o!', flip: true,
+    note: 'Conway, 1970. Flies in a straight line at half the speed of light: Life\'s top speed for spaceships is one square every 2 generations, written c/2.' },
+  { group: 'Spaceships', id: 'mwss', name: 'Middleweight spaceship', rle: '3bo$bo3bo$o$o4bo$5o!', flip: true,
+    note: 'A longer cousin of the lightweight spaceship. It also travels at c/2.' },
+  { group: 'Spaceships', id: 'hwss', name: 'Heavyweight spaceship', rle: '3b2o$bo4bo$o$o5bo$6o!', flip: true,
+    note: 'The largest of the three classic spaceships. Watch the sparks flicker off its tail.' },
+  { group: 'Spaceships', id: 'copperhead', name: 'Copperhead', rle: 'b2o2b2o$3b2o$3b2o$obo2bobo$o6bo2$o6bo$b2o2b2o$2b4o2$3b2o$3b2o!',
+    note: 'Found by "zdr" in 2016, after 46 years of people hunting. A very slow spaceship that moves one square every 10 generations.' },
+  { group: 'Guns', id: 'gosper', name: 'Gosper glider gun', rle: '24bo$22bobo$12b2o6b2o12b2o$11bo3bo4b2o12b2o$2o8bo5bo3b2o$2o8bo3bob2o4bobo$10bo5bo7bo$11bo3bo$12b2o!',
+    note: 'Bill Gosper, 1970. The first pattern known to grow forever, which won a $50 prize from Conway. It fires a glider every 30 generations.' },
+  { group: 'Guns', id: 'simkin', name: 'Simkin glider gun', rle: '2o5b2o$2o5b2o2$4b2o$4b2o5$22b2ob2o$21bo5bo$21bo6bo2b2o$21b3o3bo3b2o$26bo4$20b2o$20bo$21b3o$23bo!',
+    note: 'Michael Simkin, 2015. The smallest glider gun known, with only 36 cells. It fires a glider every 120 generations.' },
+  { group: 'Methuselahs (small seeds, long lives)', id: 'rpent', name: 'R-pentomino', rle: 'b2o$2o$bo!',
+    note: 'Just 5 cells, yet it churns for 1,103 generations and throws off 6 gliders before it settles. It was the first pattern Conway\'s group couldn\'t work out by hand.' },
+  { group: 'Methuselahs (small seeds, long lives)', id: 'acorn', name: 'Acorn', rle: 'bo5b$3bo3b$2o2b3o!',
+    note: 'Charles Corderman. 7 cells that take 5,206 generations to settle, finishing with 633 cells and 13 gliders flying away.' },
+  { group: 'Methuselahs (small seeds, long lives)', id: 'diehard', name: 'Diehard', rle: '6bob$2o6b$bo3b3o!',
+    note: 'The opposite of an acorn. It looks busy, then vanishes completely in generation 130.' },
+  { group: 'Oscillators', id: 'blinker', name: 'Blinker', rle: '3o!',
+    note: 'The smallest oscillator. It flips between across and down every generation (period 2).' },
+  { group: 'Oscillators', id: 'pulsar', name: 'Pulsar', rle: '2b3o3b3o2b2$o4bobo4bo$o4bobo4bo$o4bobo4bo$2b3o3b3o2b2$2b3o3b3o2b$o4bobo4bo$o4bobo4bo$o4bobo4bo2$2b3o3b3o!',
+    note: 'A period-3 oscillator with four-way symmetry. It was one of the first found.' },
+  { group: 'Oscillators', id: 'penta', name: 'Pentadecathlon', rle: '2bo4bo2b$2ob4ob2o$2bo4bo!',
+    note: 'Period 15. It starts as a row of ten cells and goes through a surprising series of shapes.' },
+  { group: 'Grows forever', id: 'engine10', name: '10-cell infinite grower', rle: '6bob$4bob2o$4bobob$4bo3b$2bo5b$obo!',
+    note: 'Paul Callahan. The smallest pattern known to grow forever. It turns into a "switch engine" that lays a trail of blocks across the board.' },
+  { group: 'Grows forever', id: 'engine5x5', name: '5×5 infinite grower', rle: '3obo$o4b$3b2o$b2obo$obobo!',
+    note: 'Also Paul Callahan. It fits in a 5×5 square and grows forever.' },
+  { group: 'Grows forever', id: 'oneline', name: 'One-line infinite grower', rle: '8ob5o3b3o6b7ob5o!',
+    note: 'A single row of cells, 39 wide, that grows forever.' },
+];
+const BY_ID = Object.fromEntries(PATTERNS.map(p => [p.id, p]));
+for (const p of PATTERNS) p.base = orient(parseRLE(p.rle), 0, !!p.flip).cells;
+
+function place(id, x, y, rot = 0, flip = false) {
+  const { cells } = orient(BY_ID[id].base, rot, flip);
+  for (const [cx, cy] of cells) live.add(key(x + cx, y + cy));
+}
+
+const SCENES = [
+  { id: 'welcome', name: 'Workshop sampler', note: 'A Gosper gun firing gliders, three spaceships racing right, a copperhead creeping up, and two oscillators keeping time.',
+    build() {
+      place('gosper', 0, 0);
+      place('lwss', 10, -14); place('mwss', 4, -24); place('hwss', -2, -35);
+      place('copperhead', -34, -30);
+      place('pulsar', -34, 14); place('penta', -36, 36);
+    } },
+  { id: 'acornScene', name: 'An acorn grows', note: 'Seven cells. Leave it running (try a faster speed) and it takes 5,206 generations to settle.',
+    build() { place('acorn', 0, 0); } },
+  { id: 'rpentScene', name: 'R-pentomino', note: 'Five cells that keep going for 1,103 generations.',
+    build() { place('rpent', 0, 0); } },
+  { id: 'guns', name: 'Two guns', note: 'Gosper\'s 1970 gun (top) and Simkin\'s 2015 gun (bottom), both firing gliders off toward the lower right.',
+    build() { place('gosper', 0, 0); place('simkin', 2, 30); } },
+  { id: 'grow', name: 'Switch engine', note: 'Ten cells become an engine that lays blocks forever. Turn the speed up.',
+    build() { place('engine10', 0, 0); } },
+  { id: 'soup', name: 'Random soup', note: 'A square of random cells. Most soups burn out into still lifes and blinkers, but sometimes a glider escapes.',
+    build() { for (let x = 0; x < 64; x++) for (let y = 0; y < 64; y++) if (Math.random() < 0.35) live.add(key(x, y)); } },
+  { id: 'empty', name: 'Empty board', note: 'A blank board. Draw your own pattern or drop some in from the menu.', build() {} },
+];
+
+/* =====================================================================
+   View: camera, drawing
+   ===================================================================== */
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+let W = 0, H = 0, dpr = 1;
+const cam = { x: 0, y: 0, s: 10 };          // world point at screen centre; pixels per cell
+const MIN_S = 0.04, MAX_S = 60;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = stage.clientWidth; H = stage.clientHeight;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dirty = true;
+}
+const toWorld = (sx, sy) => [(sx - W / 2) / cam.s + cam.x, (sy - H / 2) / cam.s + cam.y];
+const cellAt = (sx, sy) => { const [wx, wy] = toWorld(sx, sy); return [Math.floor(wx), Math.floor(wy)]; };
+
+function bounds() {
+  if (!live.size) return null;
+  let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity;
+  for (const k of live) {
+    const x = kx(k), y = ky(k);
+    if (x < mx) mx = x; if (x > Mx) Mx = x;
+    if (y < my) my = y; if (y > My) My = y;
+  }
+  return { mx, my, Mx, My };
+}
+function fitTarget(b) {
+  const pad = 6;
+  const s = Math.min(W / (b.Mx - b.mx + 1 + 2 * pad), H / (b.My - b.my + 1 + 2 * pad), 24);
+  return { x: (b.mx + b.Mx + 1) / 2, y: (b.my + b.My + 1) / 2, s: Math.max(MIN_S, s) };
+}
+function fitNow() {
+  const b = bounds(); if (!b) return;
+  Object.assign(cam, fitTarget(b)); dirty = true;
+}
+
+let dirty = true;
+let ghost = null;            // { cells, x, y } preview while stamping
+let hoverCell = null;
+
+function render() {
+  ctx.fillStyle = '#0e1d30';
+  ctx.fillRect(0, 0, W, H);
+  const s = cam.s;
+  const x0 = cam.x - W / 2 / s, y0 = cam.y - H / 2 / s;
+  const x1 = cam.x + W / 2 / s, y1 = cam.y + H / 2 / s;
+
+  // grid lines when zoomed in
+  if (s >= 7) {
+    ctx.strokeStyle = s >= 14 ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.045)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let gx = Math.floor(x0); gx <= x1; gx++) { const sx = Math.round((gx - cam.x) * s + W / 2) + .5; ctx.moveTo(sx, 0); ctx.lineTo(sx, H); }
+    for (let gy = Math.floor(y0); gy <= y1; gy++) { const sy = Math.round((gy - cam.y) * s + H / 2) + .5; ctx.moveTo(0, sy); ctx.lineTo(W, sy); }
+    ctx.stroke();
+  }
+
+  // live cells
+  const gap = s >= 7 ? 1 : 0;
+  const size = Math.max(s - gap, s < 1 ? 1 : s);
+  ctx.fillStyle = '#f0cf86';
+  for (const k of live) {
+    const x = kx(k), y = ky(k);
+    if (x < x0 - 1 || x > x1 || y < y0 - 1 || y > y1) continue;
+    const sx = (x - cam.x) * s + W / 2, sy = (y - cam.y) * s + H / 2;
+    if (s >= 2) ctx.fillRect(Math.round(sx) + gap, Math.round(sy) + gap, Math.round(sx + s) - Math.round(sx) - gap, Math.round(sy + s) - Math.round(sy) - gap);
+    else ctx.fillRect(Math.floor(sx), Math.floor(sy), size, size);
+  }
+
+  // stamp preview
+  if (ghost && hoverCell) {
+    ctx.fillStyle = 'rgba(201,151,63,.55)';
+    const px = Math.max(s - gap, 1);
+    for (const [gx, gy] of ghost.cells) {
+      const sx = (ghost.x + gx - cam.x) * s + W / 2, sy = (ghost.y + gy - cam.y) * s + H / 2;
+      ctx.fillRect(Math.round(sx) + gap, Math.round(sy) + gap, px, px);
+    }
+    ctx.strokeStyle = 'rgba(201,151,63,.8)'; ctx.setLineDash([4, 4]);
+    const bx = (ghost.x - cam.x) * s + W / 2, by = (ghost.y - cam.y) * s + H / 2;
+    ctx.strokeRect(Math.round(bx) - 3.5, Math.round(by) - 3.5, ghost.w * s + 7, ghost.h * s + 7);
+    ctx.setLineDash([]);
+  }
+
+  // follow ring
+  if (follow) {
+    const sx = (follow.x - cam.x) * s + W / 2, sy = (follow.y - cam.y) * s + H / 2;
+    const r = Math.max(18, follow.r * s);
+    ctx.strokeStyle = 'rgba(201,151,63,.9)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1;
+  }
+  dirty = false;
+}
+
+/* =====================================================================
+   UI state
+   ===================================================================== */
+let running = true;
+let tool = 'move';
+let stamp = null;            // { id, rot, flip }
+let autoZoom = true;
+let follow = null;           // { x, y, r }
+const SPEEDS = [1, 2, 4, 8, 15, 30, 60, 120, 250, 500, 1000];
+let speedIdx = 4;
+
+const $ = id => document.getElementById(id);
+const runBtn = $('runBtn'), statsEl = $('stats'), noteEl = $('note'), picker = $('picker');
+
+function setRunning(v) {
+  running = v;
+  runBtn.textContent = v ? '❚❚ Pause' : '▶ Run';
+  runBtn.classList.toggle('on', v);
+}
+function setTool(t) {
+  tool = t;
+  if (t !== 'stamp') { stamp = null; ghost = null; document.body.classList.remove('stamping'); picker.value = ''; }
+  if (t !== 'follow') follow = null;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  canvas.className = t;
+  dirty = true;
+}
+function setAuto(v) { autoZoom = v; $('autoBtn').classList.toggle('on', v); }
+let noteTimer = 0;
+function showNote(title, text, ms = 9000) {
+  noteEl.innerHTML = (title ? `<strong>${title}</strong><br>` : '') + text;
+  noteEl.classList.remove('hidden');
+  clearTimeout(noteTimer);
+  if (ms) noteTimer = setTimeout(() => noteEl.classList.add('hidden'), ms);
+}
+function updateSpeedLabel() {
+  const v = SPEEDS[speedIdx];
+  $('speedLabel').textContent = v + (v === 1 ? ' gen/s' : ' gen/s');
+}
+
+function loadScene(id) {
+  const sc = SCENES.find(s => s.id === id);
+  live = new Set(); gen = 0; follow = null;
+  sc.build();
+  setTool('move'); setAuto(true); fitNow();
+  showNote(sc.name, sc.note);
+  dirty = true;
+}
+
+// picker contents
+(function buildPicker() {
+  const head = document.createElement('option'); head.value = ''; head.textContent = 'Add a pattern…'; picker.appendChild(head);
+  const groups = {};
+  for (const p of PATTERNS) {
+    if (!groups[p.group]) { groups[p.group] = document.createElement('optgroup'); groups[p.group].label = p.group; picker.appendChild(groups[p.group]); }
+    const o = document.createElement('option'); o.value = 'p:' + p.id; o.textContent = p.name; groups[p.group].appendChild(o);
+  }
+  const sg = document.createElement('optgroup'); sg.label = 'Start over with…'; picker.appendChild(sg);
+  for (const s of SCENES) { const o = document.createElement('option'); o.value = 's:' + s.id; o.textContent = s.name; sg.appendChild(o); }
+})();
+
+picker.addEventListener('change', () => {
+  const v = picker.value;
+  if (v.startsWith('s:')) { loadScene(v.slice(2)); picker.value = ''; picker.blur(); return; }
+  if (v.startsWith('p:')) {
+    const id = v.slice(2);
+    setTool('stamp');
+    picker.value = v;
+    stamp = { id, rot: 0, flip: false };
+    document.body.classList.add('stamping');
+    refreshGhost();
+    const p = BY_ID[id];
+    showNote(p.name, p.note + '<br><em>Click the board to drop it in · R rotate · F flip · Esc done</em>', 0);
+    picker.blur();
+  }
+});
+function refreshGhost() {
+  if (!stamp) { ghost = null; return; }
+  const o = orient(BY_ID[stamp.id].base, stamp.rot, stamp.flip);
+  const c = hoverCell || [Math.floor(cam.x), Math.floor(cam.y)];
+  ghost = { cells: o.cells, w: o.w, h: o.h, x: c[0] - Math.floor(o.w / 2), y: c[1] - Math.floor(o.h / 2) };
+  dirty = true;
+}
+
+/* =====================================================================
+   Pointer input: drag, draw, stamp, follow, pinch zoom
+   ===================================================================== */
+const pointers = new Map();
+let drag = null;             // { mode, lastX, lastY, moved, value, lastCell }
+let pinch = null;
+
+function zoomAt(sx, sy, factor) {
+  const [wx, wy] = toWorld(sx, sy);
+  cam.s = Math.min(MAX_S, Math.max(MIN_S, cam.s * factor));
+  cam.x = wx - (sx - W / 2) / cam.s;
+  cam.y = wy - (sy - H / 2) / cam.s;
+  dirty = true;
+}
+function localXY(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+function paintLine(a, b, value) {
+  let [x0, y0] = a; const [x1, y1] = b;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    const k = key(x0, y0); value ? live.add(k) : live.delete(k);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+  dirty = true;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  const [x, y] = localXY(e);
+  pointers.set(e.pointerId, { x, y });
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    drag = null; return;
+  }
+  const panButton = e.button === 1 || e.button === 2 || spaceHeld;
+  let mode = panButton ? 'pan' : tool === 'move' ? 'pan' : tool;
+  drag = { mode, lastX: x, lastY: y, sx: x, sy: y, moved: false };
+  if (mode === 'draw') {
+    const c = cellAt(x, y);
+    drag.value = !live.has(key(c[0], c[1]));
+    drag.lastCell = c;
+    paintLine(c, c, drag.value);
+  }
+  if (mode === 'pan') canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', e => {
+  const [x, y] = localXY(e);
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x, y });
+  if (pinch && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    cam.x -= (mx - pinch.mx) / cam.s; cam.y -= (my - pinch.my) / cam.s;
+    zoomAt(mx, my, d / pinch.d);
+    pinch = { d, mx, my };
+    setAuto(false);
+    return;
+  }
+  hoverCell = cellAt(x, y);
+  if (stamp) refreshGhost();
+  if (!drag) return;
+  if (Math.hypot(x - drag.sx, y - drag.sy) > 4) drag.moved = true;
+  if (drag.mode === 'pan') {
+    cam.x -= (x - drag.lastX) / cam.s; cam.y -= (y - drag.lastY) / cam.s;
+    if (drag.moved) { setAuto(false); if (follow) follow = null; }
+    dirty = true;
+  } else if (drag.mode === 'draw') {
+    const c = cellAt(x, y);
+    paintLine(drag.lastCell, c, drag.value);
+    drag.lastCell = c;
+  }
+  drag.lastX = x; drag.lastY = y;
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (!drag) return;
+  const [x, y] = localXY(e);
+  if (!drag.moved && e.type === 'pointerup') {
+    if (drag.mode === 'stamp' && ghost) {
+      hoverCell = cellAt(x, y); refreshGhost();
+      for (const [gx, gy] of ghost.cells) live.add(key(ghost.x + gx, ghost.y + gy));
+      dirty = true;
+    } else if (drag.mode === 'follow') {
+      startFollow(...toWorld(x, y));
+    }
+  }
+  canvas.classList.remove('dragging');
+  drag = null;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', () => { if (!drag) { hoverCell = null; dirty = true; } });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const [x, y] = localXY(e);
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  zoomAt(x, y, Math.exp(-dy * 0.0015));
+  setAuto(false);
+}, { passive: false });
+
+/* =====================================================================
+   Follow: lock onto whatever is near the clicked spot and ride along.
+   ===================================================================== */
+function nearby(fx, fy, r) {
+  let n = 0, sx = 0, sy = 0;
+  const r2 = r * r;
+  for (const k of live) {
+    const dx = kx(k) + .5 - fx, dy = ky(k) + .5 - fy;
+    if (dx * dx + dy * dy <= r2) { n++; sx += dx; sy += dy; }
+  }
+  return n ? { n, x: fx + sx / n, y: fy + sy / n } : null;
+}
+function startFollow(wx, wy) {
+  const hit = nearby(wx, wy, Math.max(6, 14 / cam.s));
+  if (!hit) { showNote('', 'Nothing there to follow. Click right on a glider or spaceship.', 4000); return; }
+  follow = { x: hit.x, y: hit.y, r: 7 };
+  setAuto(false);
+  showNote('Following', 'The camera rides along with it. Drag the board, or pick another tool, to let go.', 6000);
+  dirty = true;
+}
+function updateFollow(stepsDone) {
+  if (!follow) return;
+  // An object can move at most half a square per generation (c/2), so widen the search accordingly.
+  const hit = nearby(follow.x, follow.y, follow.r + stepsDone * 0.5 + 1);
+  if (!hit) { follow = null; showNote('', 'Lost it. It may have crashed into something or died out.', 5000); return; }
+  follow.x = hit.x; follow.y = hit.y;
+}
+
+/* =====================================================================
+   Buttons & keys
+   ===================================================================== */
+runBtn.onclick = () => setRunning(!running);
+$('stepBtn').onclick = () => { setRunning(false); step(); updateFollow(1); dirty = true; };
+$('speed').oninput = e => { speedIdx = +e.target.value; updateSpeedLabel(); };
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
+  setTool(b.dataset.tool);
+  if (b.dataset.tool === 'follow') showNote('Follow', 'Click a glider or spaceship to ride along with it.', 5000);
+  if (b.dataset.tool === 'draw') showNote('Draw', 'Click or drag to add cells. Start on a live cell to erase instead.', 5000);
+});
+$('rotateBtn').onclick = () => { if (stamp) { stamp.rot++; refreshGhost(); } };
+$('flipBtn').onclick = () => { if (stamp) { stamp.flip = !stamp.flip; refreshGhost(); } };
+$('fitBtn').onclick = () => { fitNow(); };
+$('autoBtn').onclick = () => { setAuto(!autoZoom); if (autoZoom) { follow = null; } };
+$('clearBtn').onclick = () => { live = new Set(); gen = 0; follow = null; dirty = true; setAuto(false); };
+$('aboutBtn').onclick = () => $('about').classList.add('open');
+$('aboutClose').onclick = () => $('about').classList.remove('open');
+$('about').addEventListener('click', e => { if (e.target.id === 'about') $('about').classList.remove('open'); });
+
+let spaceHeld = false;
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ') { e.preventDefault(); if (!e.repeat) setRunning(!running); }
+  else if (k === 'n' || k === 'arrowright') { setRunning(false); step(); updateFollow(1); dirty = true; }
+  else if (k === 'r' && stamp) { stamp.rot++; refreshGhost(); }
+  else if (k === 'f' && stamp) { stamp.flip = !stamp.flip; refreshGhost(); }
+  else if (k === 'escape') { $('about').classList.remove('open'); setTool('move'); noteEl.classList.add('hidden'); }
+  else if (k === 'z') fitNow();
+  else if (k === 'm') setTool('move');
+  else if (k === 'd') setTool('draw');
+  else if (k === '+' || k === '=') { zoomAt(W / 2, H / 2, 1.25); setAuto(false); }
+  else if (k === '-' || k === '_') { zoomAt(W / 2, H / 2, 0.8); setAuto(false); }
+});
+
+/* =====================================================================
+   Main loop
+   ===================================================================== */
+let acc = 0, last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.25, (now - last) / 1000); last = now;
+  let stepsDone = 0;
+  if (running && live.size) {
+    acc += dt * SPEEDS[speedIdx];
+    const t0 = performance.now();
+    while (acc >= 1) {
+      step(); stepsDone++; acc -= 1;
+      if (performance.now() - t0 > 28) { acc = 0; break; }   // don't let a big pattern freeze the page
+    }
+  } else acc = 0;
+  if (stepsDone) { updateFollow(stepsDone); dirty = true; }
+
+  // camera: follow or auto-zoom
+  if (follow) {
+    const ex = follow.x - cam.x, ey = follow.y - cam.y;
+    if (Math.abs(ex) + Math.abs(ey) > 0.01) { cam.x += ex * 0.2; cam.y += ey * 0.2; dirty = true; }
+  } else if (autoZoom && stepsDone) {
+    const b = bounds();
+    if (b) {
+      const t = fitTarget(b);
+      const halfW = W / 2 / cam.s, halfH = H / 2 / cam.s;
+      const outside = b.mx < cam.x - halfW || b.Mx + 1 > cam.x + halfW || b.my < cam.y - halfH || b.My + 1 > cam.y + halfH;
+      if (outside || t.s < cam.s) {
+        cam.s *= Math.pow(Math.min(t.s, cam.s) / cam.s, 0.15);
+        cam.x += (t.x - cam.x) * 0.15; cam.y += (t.y - cam.y) * 0.15;
+      }
+    }
+  }
+
+  if (dirty) render();
+  statsEl.innerHTML = `Generation <b>${gen.toLocaleString()}</b> · Population <b>${live.size.toLocaleString()}</b>`;
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resize);
+resize();
+speedIdx = +$('speed').value; updateSpeedLabel();
+loadScene('welcome');
+requestAnimationFrame(frame);
+</script>
+
+<!-- Home button (captcraig.net) -->
+<a href="/" id="cc-home" aria-label="Back to home page">⌂ Home</a>
+<!-- Visit counter (GoatCounter: no cookies, no personal data; localhost is not counted) -->
+<script data-goatcounter="https://captcraig.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
