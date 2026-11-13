@@ -28,6 +28,7 @@
     --muted: #8fa1b3;
   }
   * { box-sizing: border-box; }
+  html, body, button, select, a, label, input { touch-action: manipulation; }   /* no double-tap zoom */
   html, body { margin: 0; height: 100%; }
   body {
     display: flex; flex-direction: column;
@@ -58,12 +59,18 @@
 
   /* ---------- Toolbar ---------- */
   .toolbar {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
     padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
     background: var(--navy);
     border-bottom: 1px solid rgba(255,255,255,.08);
   }
-  .group { display: flex; align-items: center; gap: 6px; }
+  /* each set of related buttons sits in its own box, so groupings stay together when the bar wraps */
+  .group {
+    display: flex; align-items: center; gap: 6px; flex: none;
+    padding: 4px; border-radius: 11px;
+    background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+  }
+  .group > label { padding: 0 4px; }
   .toolbar button, .toolbar select {
     font: 600 .95rem "Source Sans 3", system-ui, sans-serif;
     color: var(--paper); background: rgba(255,255,255,.07);
@@ -78,9 +85,9 @@
   .toolbar label { font-size: .9rem; color: var(--mist); display: flex; align-items: center; gap: 6px; }
   .toolbar input[type=range] { width: 110px; accent-color: var(--brass); }
   #speedLabel { min-width: 58px; font-variant-numeric: tabular-nums; color: var(--cream); }
-  .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,.12); }
-  #rotateBtn, #flipBtn { display: none; }
-  body.stamping #rotateBtn, body.stamping #flipBtn { display: inline-block; }
+  .stampgroup { display: none; border-color: rgba(201,151,63,.6); }
+  body.stamping .stampgroup { display: flex; }
+  #doneBtn { background: rgba(201,151,63,.22); border-color: rgba(201,151,63,.7); }
 
   /* ---------- Board ---------- */
   .stage { position: relative; flex: 1; min-height: 0; }
@@ -101,22 +108,32 @@
     background: rgba(14,29,48,.86); border: 1px solid rgba(201,151,63,.45);
     border-radius: 10px; padding: 8px 12px; font-size: .92rem; line-height: 1.35; color: var(--mist);
     transition: opacity .4s;
+    pointer-events: none;   /* taps go through to the board underneath */
   }
   .note strong { color: var(--cream); font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 1rem; }
-  .note.hidden { opacity: 0; pointer-events: none; }
+  .note.hidden { opacity: 0; }
+  .note.hidden .x { pointer-events: none; }
+  .note .x {
+    pointer-events: auto; float: right; margin: -4px -6px 0 10px;
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid rgba(232,211,166,.4); background: rgba(255,255,255,.06);
+    color: var(--cream); font-size: 18px; line-height: 1; cursor: pointer;
+  }
+  .note .x:hover { background: rgba(255,255,255,.16); }
   @media (max-width: 640px) {
     .titlebar { padding-right: calc(92px + env(safe-area-inset-right)); gap: 6px 8px; }
     .titlebar h1 { font-size: 1.25rem; }
     .about-btn { font-size: .75rem; }
-    /* one compact row that scrolls sideways, so the board keeps most of the screen */
-    .toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; scrollbar-width: none; }
-    .toolbar::-webkit-scrollbar { display: none; }
-    .toolbar button, .toolbar select { padding: 4px 9px; font-size: .88rem; min-height: 32px; white-space: nowrap; flex: none; }
-    .toolbar button.primary { min-width: 74px; }
-    .toolbar label { white-space: nowrap; flex: none; }
-    .toolbar .word { display: none; }
-    .toolbar input[type=range] { width: 76px; }
-    .sep { display: none; }
+    /* compact rows: everything visible, no sliding, groups kept intact */
+    .toolbar { gap: 6px; padding-top: 6px; padding-bottom: 6px; justify-content: center; }
+    .group { padding: 3px; gap: 4px; }
+    .toolbar button, .toolbar select { padding: 4px 8px; font-size: .86rem; min-height: 32px; white-space: nowrap; }
+    .toolbar button.primary { min-width: 70px; }
+    .toolbar label { white-space: nowrap; }
+    .toolbar .word, .toolbar .long { display: none; }
+    .toolbar input[type=range] { width: 72px; }
+    .toolbar select { max-width: 150px; }
+    #speedLabel { min-width: 52px; }
     .note { left: 12px; bottom: calc(50px + env(safe-area-inset-bottom)); font-size: .85rem; }
     .stats { font-size: .82rem; }
   }
@@ -159,23 +176,24 @@
     <button id="stepBtn" title="One generation (N)">Step</button>
     <label><span class="word">Speed</span> <input id="speed" type="range" min="0" max="10" value="4"><span id="speedLabel"></span></label>
   </div>
-  <div class="sep"></div>
   <div class="group" role="group" aria-label="Tool">
     <button data-tool="move" class="on" title="Drag to move around (M)">✋ Move</button>
     <button data-tool="draw" title="Click or drag to add or remove cells (D)">✎ Draw</button>
     <button data-tool="follow" title="Click a moving object to follow it">◎ Follow</button>
   </div>
-  <div class="sep"></div>
   <div class="group">
     <select id="picker" aria-label="Patterns and scenes"></select>
-    <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
-    <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
   </div>
-  <div class="sep"></div>
   <div class="group">
     <button id="fitBtn" title="Show everything (Z)">Fit</button>
-    <button id="autoBtn" class="on" title="Keep zooming out so everything stays in view">Auto-zoom</button>
+    <button id="autoBtn" class="on" title="Keep zooming out so everything stays in view">Auto<span class="long">-zoom</span></button>
     <button id="clearBtn">Clear</button>
+  </div>
+  <!-- shown only while dropping in a pattern -->
+  <div class="group stampgroup" role="group" aria-label="Placing a pattern">
+    <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
+    <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
+    <button id="doneBtn" title="Finish placing (Esc)">✓ Done</button>
   </div>
 </div>
 
@@ -200,11 +218,11 @@
     <p>Those three rules produce gliders that crawl across the board, guns that fire them forever, and tiny seeds that churn for thousands of generations before they settle.</p>
     <h3>How to use it</h3>
     <ul>
-      <li>Pick a pattern from the menu and click the board to drop it in. Use <kbd>R</kbd> to rotate it and <kbd>F</kbd> to flip it. Press <kbd>Esc</kbd> when you're done.</li>
+      <li>Pick a pattern from the menu and tap or click the board to drop it in, as many times as you like. <b>Rotate</b> and <b>Flip</b> turn it (or <kbd>R</kbd> and <kbd>F</kbd>), and <b>Done</b> (or <kbd>Esc</kbd>) finishes.</li>
       <li>Scroll or pinch to zoom, and drag to move around. The board has no edges.</li>
       <li><b>Draw</b> lets you add or remove single squares. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
       <li><b>Auto-zoom</b> pulls back as the pattern grows, so nothing escapes the view.</li>
-      <li>Keys: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
+      <li>On a keyboard: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
     </ul>
     <h3>Coming next</h3>
     <p>The workshop keeps tinkering. Next up: bigger patterns such as puffers and breeders, plus a faster engine (Hashlife) for running them millions of generations ahead.</p>
@@ -439,6 +457,7 @@ const SPEEDS = [1, 2, 4, 8, 15, 30, 60, 120, 250, 500, 1000];
 let speedIdx = 4;
 
 const $ = id => document.getElementById(id);
+const TOUCH = window.matchMedia && matchMedia('(hover: none)').matches;   // phones and tablets: no Esc or R/F keys
 const runBtn = $('runBtn'), statsEl = $('stats'), noteEl = $('note'), picker = $('picker');
 
 function setRunning(v) {
@@ -456,8 +475,10 @@ function setTool(t) {
 }
 function setAuto(v) { autoZoom = v; $('autoBtn').classList.toggle('on', v); }
 let noteTimer = 0;
+function hideNote() { clearTimeout(noteTimer); noteEl.classList.add('hidden'); }
 function showNote(title, text, ms = 9000) {
-  noteEl.innerHTML = (title ? `<strong>${title}</strong><br>` : '') + text;
+  noteEl.innerHTML = '<button class="x" aria-label="Close">×</button>' + (title ? `<strong>${title}</strong><br>` : '') + text;
+  noteEl.querySelector('.x').onclick = hideNote;
   noteEl.classList.remove('hidden');
   clearTimeout(noteTimer);
   if (ms) noteTimer = setTimeout(() => noteEl.classList.add('hidden'), ms);
@@ -499,7 +520,9 @@ picker.addEventListener('change', () => {
     document.body.classList.add('stamping');
     refreshGhost();
     const p = BY_ID[id];
-    showNote(p.name, p.note + '<br><em>Click the board to drop it in · R rotate · F flip · Esc done</em>', 0);
+    showNote(p.name, p.note + '<br><em>' + (TOUCH
+      ? 'Tap the board to drop it in. Rotate and Flip turn it; tap Done when you’re finished.'
+      : 'Click the board to drop it in · R rotate · F flip · Esc or Done when finished') + '</em>', 12000);
     picker.blur();
   }
 });
@@ -597,6 +620,7 @@ function endPointer(e) {
     if (drag.mode === 'stamp' && ghost) {
       hoverCell = cellAt(x, y); refreshGhost();
       for (const [gx, gy] of ghost.cells) live.add(key(ghost.x + gx, ghost.y + gy));
+      hideNote();
       dirty = true;
     } else if (drag.mode === 'follow') {
       startFollow(...toWorld(x, y));
@@ -658,6 +682,7 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
 });
 $('rotateBtn').onclick = () => { if (stamp) { stamp.rot++; refreshGhost(); } };
 $('flipBtn').onclick = () => { if (stamp) { stamp.flip = !stamp.flip; refreshGhost(); } };
+$('doneBtn').onclick = () => { setTool('move'); hideNote(); };
 $('fitBtn').onclick = () => { fitNow(); };
 $('autoBtn').onclick = () => { setAuto(!autoZoom); if (autoZoom) { follow = null; } };
 $('clearBtn').onclick = () => { live = new Set(); gen = 0; follow = null; dirty = true; setAuto(false); };
