@@ -49,11 +49,6 @@
     font-size: clamp(1.3rem, 3.6vw, 1.8rem); margin: 0; letter-spacing: .4px;
   }
   .titlebar h1 span { color: var(--brass); }
-  .wip {
-    font-size: .8rem; font-weight: 600; color: var(--navy);
-    background: var(--cream); border-radius: 999px; padding: 2px 10px;
-    white-space: nowrap;
-  }
   .about-btn {
     background: none; border: 1px solid rgba(232,211,166,.5); color: var(--cream);
     border-radius: 999px; padding: 2px 11px; font: 600 .85rem "Source Sans 3", system-ui, sans-serif;
@@ -112,7 +107,7 @@
   @media (max-width: 640px) {
     .titlebar { padding-right: calc(92px + env(safe-area-inset-right)); gap: 6px 8px; }
     .titlebar h1 { font-size: 1.25rem; }
-    .wip, .about-btn { font-size: .75rem; }
+    .about-btn { font-size: .75rem; }
     /* one compact row that scrolls sideways, so the board keeps most of the screen */
     .toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; scrollbar-width: none; }
     .toolbar::-webkit-scrollbar { display: none; }
@@ -155,7 +150,6 @@
 
 <div class="titlebar">
   <h1>Game of <span>Life</span></h1>
-  <span class="wip">on the workbench</span>
   <button class="about-btn" id="aboutBtn">What is this?</button>
 </div>
 
@@ -212,8 +206,8 @@
       <li><b>Auto-zoom</b> pulls back as the pattern grows, so nothing escapes the view.</li>
       <li>Keys: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
     </ul>
-    <h3>On the workbench</h3>
-    <p>This page is still being built, so expect changes. Coming next: bigger patterns such as puffers and breeders, plus a faster engine (Hashlife) for running them millions of generations ahead.</p>
+    <h3>Coming next</h3>
+    <p>The workshop keeps tinkering. Next up: bigger patterns such as puffers and breeders, plus a faster engine (Hashlife) for running them millions of generations ahead.</p>
   </div>
 </div>
 
