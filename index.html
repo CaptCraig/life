@@ -85,14 +85,16 @@
   .toolbar label { font-size: .9rem; color: var(--mist); display: flex; align-items: center; gap: 6px; }
   .toolbar input[type=range] { width: 110px; accent-color: var(--brass); }
   #speedLabel { min-width: 58px; font-variant-numeric: tabular-nums; color: var(--cream); }
-  .stampgroup { display: none; border-color: rgba(201,151,63,.6); }
-  body.stamping .stampgroup { display: flex; }
+  .stampgroup, .erasegroup { display: none; border-color: rgba(201,151,63,.6); }
+  body.stamping .stampgroup, body.erasing .erasegroup { display: flex; }
+  #undoBtn:disabled { opacity: .4; cursor: default; }
   #doneBtn { background: rgba(201,151,63,.22); border-color: rgba(201,151,63,.7); }
 
   /* ---------- Board ---------- */
   .stage { position: relative; flex: 1; min-height: 0; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
   canvas.draw, canvas.stamp, canvas.follow { cursor: crosshair; }
+  canvas.erase { cursor: none; }          /* the eraser circle is the cursor */
   canvas.dragging { cursor: grabbing; }
 
   .stats {
@@ -179,6 +181,7 @@
   <div class="group" role="group" aria-label="Tool">
     <button data-tool="move" class="on" title="Drag to move around (M)">✋ Move</button>
     <button data-tool="draw" title="Click or drag to add or remove cells (D)">✎ Draw</button>
+    <button data-tool="erase" title="Sweep to wipe out cells (E)">⌫ Erase</button>
     <button data-tool="follow" title="Click a moving object to follow it">◎ Follow</button>
   </div>
   <div class="group">
@@ -194,6 +197,10 @@
     <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
     <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
     <button id="doneBtn" title="Finish placing (Esc)">✓ Done</button>
+  </div>
+  <!-- shown only while erasing -->
+  <div class="group erasegroup" role="group" aria-label="Erasing">
+    <button id="undoBtn" title="Put back the last sweep (⌘Z / Ctrl-Z)" disabled>↶ Undo</button>
   </div>
 </div>
 
@@ -220,7 +227,7 @@
     <ul>
       <li>Pick a pattern from the menu and tap or click the board to drop it in, as many times as you like. <b>Rotate</b> and <b>Flip</b> turn it (or <kbd>R</kbd> and <kbd>F</kbd>), and <b>Done</b> (or <kbd>Esc</kbd>) finishes.</li>
       <li>Scroll or pinch to zoom, and drag to move around. The board has no edges.</li>
-      <li><b>Draw</b> lets you add or remove single squares. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
+      <li><b>Draw</b> lets you add or remove single squares. <b>Erase</b> pauses the board and gives you a round eraser: sweep it across to wipe out cells (zoom in for a small eraser, out for a big one), and <b>Undo</b> puts back the last sweep. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
       <li><b>Auto-zoom</b> pulls back as the pattern grows, so nothing escapes the view.</li>
       <li>On a keyboard: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
     </ul>
@@ -256,6 +263,7 @@ function step() {
   for (const [k, c] of counts) if (c === 3 || (c === 2 && live.has(k))) next.add(k);
   live = next;
   gen++;
+  if (undoStack.length) { undoStack.length = 0; undoChanged = true; }
 }
 
 /* =====================================================================
@@ -435,6 +443,14 @@ function render() {
     ctx.setLineDash([]);
   }
 
+  // eraser circle
+  if (tool === 'erase' && eraserAt) {
+    const r = eraserRadius();
+    ctx.beginPath(); ctx.arc(eraserAt[0], eraserAt[1], r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(232,211,166,.10)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(232,211,166,.9)'; ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
+  }
+
   // follow ring
   if (follow) {
     const sx = (follow.x - cam.x) * s + W / 2, sy = (follow.y - cam.y) * s + H / 2;
@@ -453,6 +469,8 @@ let tool = 'move';
 let stamp = null;            // { id, rot, flip }
 let autoZoom = true;
 let follow = null;           // { x, y, r }
+let eraserAt = null;         // [screenX, screenY] where the eraser circle is drawn
+let undoStack = [], undoChanged = false;   // each entry: the cell keys one sweep removed
 const SPEEDS = [1, 2, 4, 8, 15, 30, 60, 120, 250, 500, 1000];
 let speedIdx = 4;
 
@@ -467,6 +485,8 @@ function setRunning(v) {
 }
 function setTool(t) {
   tool = t;
+  document.body.classList.toggle('erasing', t === 'erase');
+  if (t !== 'erase') eraserAt = null;
   if (t !== 'stamp') { stamp = null; ghost = null; document.body.classList.remove('stamping'); picker.value = ''; }
   if (t !== 'follow') follow = null;
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
@@ -564,6 +584,39 @@ function paintLine(a, b, value) {
   dirty = true;
 }
 
+/* ---------- Eraser: a circle 10% of the screen width (bigger on phones, so it shows round a fingertip) */
+function eraserRadius() { return Math.max(W * 0.05, TOUCH ? 35 : 10); }
+// remove every live cell whose square the circle touches, recording them for Undo
+function eraseCircle(sx, sy, removed) {
+  const [wx, wy] = toWorld(sx, sy), r = eraserRadius() / cam.s, r2 = r * r;
+  const hit = (x, y) => {
+    const dx = Math.max(x - wx, 0, wx - (x + 1)), dy = Math.max(y - wy, 0, wy - (y + 1));
+    return dx * dx + dy * dy <= r2;
+  };
+  const span = 2 * r + 2;
+  if (span * span < live.size) {          // small eraser: check just the squares under it
+    for (let x = Math.floor(wx - r); x <= Math.floor(wx + r); x++)
+      for (let y = Math.floor(wy - r); y <= Math.floor(wy + r); y++) {
+        const k = key(x, y);
+        if (live.has(k) && hit(x, y)) { live.delete(k); removed.push(k); }
+      }
+  } else {                                // big eraser (zoomed out): check the live cells instead
+    for (const k of live) if (hit(kx(k), ky(k))) { live.delete(k); removed.push(k); }
+  }
+}
+// sweep from one point to the next in small hops, so a fast swipe leaves no gaps
+function eraseStroke(x0, y0, x1, y1, removed) {
+  const hop = Math.max(2, eraserRadius() / 2), n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / hop);
+  for (let i = 1; i <= n; i++) eraseCircle(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, removed);
+  dirty = true;
+}
+function updateUndo() { $('undoBtn').disabled = !undoStack.length; undoChanged = false; }
+function undoErase() {
+  const last = undoStack.pop(); if (!last) return;
+  for (const k of last) live.add(k);
+  updateUndo(); dirty = true;
+}
+
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   const [x, y] = localXY(e);
@@ -571,6 +624,8 @@ canvas.addEventListener('pointerdown', e => {
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    if (drag && drag.removed && drag.removed.length) { undoStack.push(drag.removed); updateUndo(); }   // second finger: keep what was erased undoable
+    eraserAt = null;
     drag = null; return;
   }
   const panButton = e.button === 1 || e.button === 2 || spaceHeld;
@@ -581,6 +636,11 @@ canvas.addEventListener('pointerdown', e => {
     drag.value = !live.has(key(c[0], c[1]));
     drag.lastCell = c;
     paintLine(c, c, drag.value);
+  }
+  if (mode === 'erase') {
+    drag.removed = [];
+    eraserAt = [x, y];
+    eraseCircle(x, y, drag.removed); dirty = true;
   }
   if (mode === 'pan') canvas.classList.add('dragging');
 });
@@ -598,6 +658,7 @@ canvas.addEventListener('pointermove', e => {
   }
   hoverCell = cellAt(x, y);
   if (stamp) refreshGhost();
+  if (tool === 'erase' && (drag || e.pointerType === 'mouse' || e.pointerType === 'pen')) { eraserAt = [x, y]; dirty = true; }
   if (!drag) return;
   if (Math.hypot(x - drag.sx, y - drag.sy) > 4) drag.moved = true;
   if (drag.mode === 'pan') {
@@ -608,6 +669,8 @@ canvas.addEventListener('pointermove', e => {
     const c = cellAt(x, y);
     paintLine(drag.lastCell, c, drag.value);
     drag.lastCell = c;
+  } else if (drag.mode === 'erase') {
+    eraseStroke(drag.lastX, drag.lastY, x, y, drag.removed);
   }
   drag.lastX = x; drag.lastY = y;
 });
@@ -626,12 +689,16 @@ function endPointer(e) {
       startFollow(...toWorld(x, y));
     }
   }
+  if (drag.mode === 'erase') {
+    if (drag.removed.length) { undoStack.push(drag.removed); if (undoStack.length > 30) undoStack.shift(); updateUndo(); }
+    if (e.pointerType === 'touch') { eraserAt = null; dirty = true; }   // finger lifted: hide the circle
+  }
   canvas.classList.remove('dragging');
   drag = null;
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
-canvas.addEventListener('pointerleave', () => { if (!drag) { hoverCell = null; dirty = true; } });
+canvas.addEventListener('pointerleave', () => { if (!drag) { hoverCell = null; eraserAt = null; dirty = true; } });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
@@ -679,10 +746,21 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   setTool(b.dataset.tool);
   if (b.dataset.tool === 'follow') showNote('Follow', 'Click a glider or spaceship to ride along with it.', 5000);
   if (b.dataset.tool === 'draw') showNote('Draw', 'Click or drag to add cells. Start on a live cell to erase instead.', 5000);
+  if (b.dataset.tool === 'erase') startErase();
 });
 $('rotateBtn').onclick = () => { if (stamp) { stamp.rot++; refreshGhost(); } };
 $('flipBtn').onclick = () => { if (stamp) { stamp.flip = !stamp.flip; refreshGhost(); } };
 $('doneBtn').onclick = () => { setTool('move'); hideNote(); };
+$('undoBtn').onclick = undoErase;
+function startErase() {
+  setTool('erase');
+  setRunning(false);
+  setAuto(false);
+  showNote('Erase', (TOUCH
+    ? 'Drag a finger to wipe out cells. Two fingers still move and zoom the board.'
+    : 'Hold the mouse button and sweep to wipe out cells.')
+    + ' Zoom in for a small eraser, out for a big one. <b>Undo</b> puts back the last sweep; press <b>Run</b> when you’re done.', 9000);
+}
 $('fitBtn').onclick = () => { fitNow(); };
 $('autoBtn').onclick = () => { setAuto(!autoZoom); if (autoZoom) { follow = null; } };
 $('clearBtn').onclick = () => { live = new Set(); gen = 0; follow = null; dirty = true; setAuto(false); };
@@ -692,6 +770,7 @@ $('about').addEventListener('click', e => { if (e.target.id === 'about') $('abou
 
 let spaceHeld = false;
 window.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && tool === 'erase' && undoStack.length) { e.preventDefault(); undoErase(); return; }
   if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === ' ') { e.preventDefault(); if (!e.repeat) setRunning(!running); }
@@ -702,6 +781,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'z') fitNow();
   else if (k === 'm') setTool('move');
   else if (k === 'd') setTool('draw');
+  else if (k === 'e') startErase();
   else if (k === '+' || k === '=') { zoomAt(W / 2, H / 2, 1.25); setAuto(false); }
   else if (k === '-' || k === '_') { zoomAt(W / 2, H / 2, 0.8); setAuto(false); }
 });
@@ -740,6 +820,7 @@ function frame(now) {
     }
   }
 
+  if (undoChanged) updateUndo();
   if (dirty) render();
   statsEl.innerHTML = `Generation <b>${gen.toLocaleString()}</b> · Population <b>${live.size.toLocaleString()}</b>`;
   requestAnimationFrame(frame);
