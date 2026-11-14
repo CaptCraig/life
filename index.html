@@ -95,6 +95,10 @@
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
   canvas.draw, canvas.stamp, canvas.follow { cursor: crosshair; }
   canvas.erase { cursor: none; }          /* the eraser circle is the cursor */
+  canvas.copy { cursor: cell; }
+  #origBtn { display: none; }
+  body.pasting #origBtn { display: inline-block; }
+  .toolbar button:disabled { opacity: .4; cursor: default; }
   canvas.dragging { cursor: grabbing; }
 
   .stats {
@@ -176,6 +180,7 @@
   <div class="group">
     <button id="runBtn" class="primary on">❚❚ Pause</button>
     <button id="stepBtn" title="One generation (N)">Step</button>
+    <button id="resetBtn" title="Back to how the board was when you last pressed Run or Step (0)" disabled>⏮ Reset</button>
     <label><span class="word">Speed</span> <input id="speed" type="range" min="0" max="10" value="4"><span id="speedLabel"></span></label>
   </div>
   <div class="group" role="group" aria-label="Tool">
@@ -186,6 +191,8 @@
   </div>
   <div class="group">
     <select id="picker" aria-label="Patterns and scenes"></select>
+    <button data-tool="copy" title="Drag a box around cells to copy them (C)">⬚ Copy</button>
+    <button id="pasteBtn" title="Place copies of what you copied (V)" disabled>⎘ Paste</button>
   </div>
   <div class="group">
     <button id="fitBtn" title="Show everything (Z)">Fit</button>
@@ -196,6 +203,7 @@
   <div class="group stampgroup" role="group" aria-label="Placing a pattern">
     <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
     <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
+    <button id="origBtn" title="Put the copy back exactly where you copied it from">⌖ Where it was</button>
     <button id="doneBtn" title="Finish placing (Esc)">✓ Done</button>
   </div>
   <!-- shown only while erasing -->
@@ -228,6 +236,8 @@
       <li>Pick a pattern from the menu and tap or click the board to drop it in, as many times as you like. <b>Rotate</b> and <b>Flip</b> turn it (or <kbd>R</kbd> and <kbd>F</kbd>), and <b>Done</b> (or <kbd>Esc</kbd>) finishes.</li>
       <li>Scroll or pinch to zoom, and drag to move around. The board has no edges.</li>
       <li><b>Draw</b> lets you add or remove single squares. <b>Erase</b> pauses the board and gives you a round eraser: sweep it across to wipe out cells (zoom in for a small eraser, out for a big one), and <b>Undo</b> puts back the last sweep. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
+      <li><b>Copy</b>: drag a box around some cells. <b>Paste</b> then lets you drop copies anywhere, turned or flipped, or tap <b>Where it was</b> to put it back exactly. Your copy is remembered on this device until you copy something else.</li>
+      <li><b>Reset</b> takes the board back to how it was the last time you pressed Run or Step, so you can try the same start again.</li>
       <li><b>Auto-zoom</b> pulls back as the pattern grows, so nothing escapes the view.</li>
       <li>On a keyboard: <kbd>Space</kbd> run or pause, <kbd>N</kbd> step, <kbd>Z</kbd> fit, <kbd>+</kbd>/<kbd>−</kbd> zoom.</li>
     </ul>
@@ -443,6 +453,25 @@ function render() {
     ctx.setLineDash([]);
   }
 
+  // copy box being dragged out
+  if (selBox) {
+    const bx = (selBox.x0 - cam.x) * s + W / 2, by = (selBox.y0 - cam.y) * s + H / 2;
+    const bw = (selBox.x1 - selBox.x0 + 1) * s, bh = (selBox.y1 - selBox.y0 + 1) * s;
+    ctx.fillStyle = 'rgba(201,151,63,.14)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = 'rgba(232,211,166,.95)'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+    ctx.strokeRect(Math.round(bx) + .5, Math.round(by) + .5, Math.round(bw), Math.round(bh));
+    ctx.setLineDash([]); ctx.lineWidth = 1;
+    ctx.font = '600 13px "Source Sans 3", system-ui, sans-serif'; ctx.fillStyle = '#e8d3a6';
+    ctx.fillText(`${selBox.x1 - selBox.x0 + 1} × ${selBox.y1 - selBox.y0 + 1}`, bx + 2, by - 6);
+  }
+  // while pasting: a faint outline of where the copy came from
+  if (stamp && stamp.id === 'clip' && clip) {
+    const bx = (clip.ox - cam.x) * s + W / 2, by = (clip.oy - cam.y) * s + H / 2;
+    ctx.strokeStyle = 'rgba(232,211,166,.35)'; ctx.setLineDash([3, 5]);
+    ctx.strokeRect(Math.round(bx) + .5, Math.round(by) + .5, Math.round(clip.w * s), Math.round(clip.h * s));
+    ctx.setLineDash([]);
+  }
+
   // eraser circle
   if (tool === 'erase' && eraserAt) {
     const r = eraserRadius();
@@ -471,6 +500,10 @@ let autoZoom = true;
 let follow = null;           // { x, y, r }
 let eraserAt = null;         // [screenX, screenY] where the eraser circle is drawn
 let undoStack = [], undoChanged = false;   // each entry: the cell keys one sweep removed
+let clip = null;             // what Copy picked up: { cells: [[x,y]...] relative to the box, w, h, ox, oy }
+let selBox = null;           // the box being dragged out while copying: { x0, y0, x1, y1 } in cells
+let snap = null;             // the board as it was when Run or Step was last pressed (for Reset)
+let edited = false;          // has anyone changed the board since that snapshot?
 const SPEEDS = [1, 2, 4, 8, 15, 30, 60, 120, 250, 500, 1000];
 let speedIdx = 4;
 
@@ -478,13 +511,26 @@ const $ = id => document.getElementById(id);
 const TOUCH = window.matchMedia && matchMedia('(hover: none)').matches;   // phones and tablets: no Esc or R/F keys
 const runBtn = $('runBtn'), statsEl = $('stats'), noteEl = $('note'), picker = $('picker');
 
+function markEdited() { edited = true; }
+function takeSnapshot() { snap = { cells: new Set(live), gen }; edited = false; $('resetBtn').disabled = false; }
+function maybeSnapshot() { if (edited || !snap) takeSnapshot(); }
+function resetBoard() {
+  if (!snap) return;
+  setRunning(false);
+  live = new Set(snap.cells); gen = snap.gen; edited = false;
+  follow = null; undoStack.length = 0; updateUndo(); dirty = true;
+  showNote('', 'Back to how the board was when you last pressed Run or Step.', 3500);
+}
 function setRunning(v) {
+  if (v && !running) maybeSnapshot();
   running = v;
   runBtn.textContent = v ? '❚❚ Pause' : '▶ Run';
   runBtn.classList.toggle('on', v);
 }
 function setTool(t) {
   tool = t;
+  selBox = null;
+  if (t !== 'stamp') document.body.classList.remove('pasting');
   document.body.classList.toggle('erasing', t === 'erase');
   if (t !== 'erase') eraserAt = null;
   if (t !== 'stamp') { stamp = null; ghost = null; document.body.classList.remove('stamping'); picker.value = ''; }
@@ -512,6 +558,7 @@ function loadScene(id) {
   const sc = SCENES.find(s => s.id === id);
   live = new Set(); gen = 0; follow = null;
   sc.build();
+  takeSnapshot();
   setTool('move'); setAuto(true); fitNow();
   showNote(sc.name, sc.note);
   dirty = true;
@@ -535,6 +582,7 @@ picker.addEventListener('change', () => {
   if (v.startsWith('p:')) {
     const id = v.slice(2);
     setTool('stamp');
+    document.body.classList.remove('pasting');
     picker.value = v;
     stamp = { id, rot: 0, flip: false };
     document.body.classList.add('stamping');
@@ -548,7 +596,7 @@ picker.addEventListener('change', () => {
 });
 function refreshGhost() {
   if (!stamp) { ghost = null; return; }
-  const o = orient(BY_ID[stamp.id].base, stamp.rot, stamp.flip);
+  const o = orient(stamp.id === 'clip' ? clip.cells : BY_ID[stamp.id].base, stamp.rot, stamp.flip);
   const c = hoverCell || [Math.floor(cam.x), Math.floor(cam.y)];
   ghost = { cells: o.cells, w: o.w, h: o.h, x: c[0] - Math.floor(o.w / 2), y: c[1] - Math.floor(o.h / 2) };
   dirty = true;
@@ -575,7 +623,7 @@ function paintLine(a, b, value) {
   const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
   let err = dx + dy;
   for (;;) {
-    const k = key(x0, y0); value ? live.add(k) : live.delete(k);
+    const k = key(x0, y0); value ? live.add(k) : live.delete(k); edited = true;
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
     if (e2 >= dy) { err += dy; x0 += sx; }
@@ -598,10 +646,10 @@ function eraseCircle(sx, sy, removed) {
     for (let x = Math.floor(wx - r); x <= Math.floor(wx + r); x++)
       for (let y = Math.floor(wy - r); y <= Math.floor(wy + r); y++) {
         const k = key(x, y);
-        if (live.has(k) && hit(x, y)) { live.delete(k); removed.push(k); }
+        if (live.has(k) && hit(x, y)) { live.delete(k); removed.push(k); edited = true; }
       }
   } else {                                // big eraser (zoomed out): check the live cells instead
-    for (const k of live) if (hit(kx(k), ky(k))) { live.delete(k); removed.push(k); }
+    for (const k of live) if (hit(kx(k), ky(k))) { live.delete(k); removed.push(k); edited = true; }
   }
 }
 // sweep from one point to the next in small hops, so a fast swipe leaves no gaps
@@ -610,11 +658,48 @@ function eraseStroke(x0, y0, x1, y1, removed) {
   for (let i = 1; i <= n; i++) eraseCircle(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, removed);
   dirty = true;
 }
+/* ---------- Copy & paste */
+function finishCopy() {
+  const b = selBox; selBox = null; dirty = true;
+  if (!b || (b.x0 === b.x1 && b.y0 === b.y1)) {
+    showNote('Copy', 'Drag a box around the cells you want to copy.', 5000); return;
+  }
+  const cells = [], w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1;
+  if (w * h < live.size) {
+    for (let x = b.x0; x <= b.x1; x++) for (let y = b.y0; y <= b.y1; y++) if (live.has(key(x, y))) cells.push([x - b.x0, y - b.y0]);
+  } else {
+    for (const k of live) { const x = kx(k), y = ky(k); if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) cells.push([x - b.x0, y - b.y0]); }
+  }
+  if (!cells.length) { showNote('Copy', 'That box is empty. Drag around some live cells.', 5000); return; }
+  clip = { cells, w, h, ox: b.x0, oy: b.y0 };
+  try { localStorage.setItem('life.clip', JSON.stringify(clip)); } catch (err) {}
+  $('pasteBtn').disabled = false;
+  setTool('move');
+  showNote('Copied', `${cells.length.toLocaleString()} cells in a ${w}×${h} box. Tap <b>⎘ Paste</b> to drop copies anywhere, or put it right back where it was.`, 7000);
+}
+function startPaste() {
+  if (!clip) return;
+  setTool('stamp');
+  picker.value = '';
+  stamp = { id: 'clip', rot: 0, flip: false };
+  document.body.classList.add('stamping', 'pasting');
+  refreshGhost();
+  showNote('Your copy', `${clip.cells.length.toLocaleString()} cells.<br><em>` + (TOUCH
+    ? 'Tap the board to drop it in. Rotate and Flip turn it; Where it was puts it back exactly; tap Done when finished.'
+    : 'Click the board to drop it in · R rotate · F flip · Where it was puts it back exactly · Esc or Done when finished') + '</em>', 12000);
+}
+function pasteWhereItWas() {
+  if (!clip) return;
+  for (const [x, y] of clip.cells) live.add(key(clip.ox + x, clip.oy + y));
+  edited = true; hideNote(); dirty = true;
+}
+try { const saved = JSON.parse(localStorage.getItem('life.clip') || 'null'); if (saved && saved.cells && saved.cells.length) clip = saved; } catch (err) {}
+
 function updateUndo() { $('undoBtn').disabled = !undoStack.length; undoChanged = false; }
 function undoErase() {
   const last = undoStack.pop(); if (!last) return;
   for (const k of last) live.add(k);
-  updateUndo(); dirty = true;
+  edited = true; updateUndo(); dirty = true;
 }
 
 canvas.addEventListener('pointerdown', e => {
@@ -636,6 +721,11 @@ canvas.addEventListener('pointerdown', e => {
     drag.value = !live.has(key(c[0], c[1]));
     drag.lastCell = c;
     paintLine(c, c, drag.value);
+  }
+  if (mode === 'copy') {
+    drag.c0 = cellAt(x, y);
+    selBox = { x0: drag.c0[0], y0: drag.c0[1], x1: drag.c0[0], y1: drag.c0[1] };
+    dirty = true;
   }
   if (mode === 'erase') {
     drag.removed = [];
@@ -671,6 +761,10 @@ canvas.addEventListener('pointermove', e => {
     drag.lastCell = c;
   } else if (drag.mode === 'erase') {
     eraseStroke(drag.lastX, drag.lastY, x, y, drag.removed);
+  } else if (drag.mode === 'copy') {
+    const c = cellAt(x, y);
+    selBox = { x0: Math.min(drag.c0[0], c[0]), y0: Math.min(drag.c0[1], c[1]), x1: Math.max(drag.c0[0], c[0]), y1: Math.max(drag.c0[1], c[1]) };
+    dirty = true;
   }
   drag.lastX = x; drag.lastY = y;
 });
@@ -683,12 +777,14 @@ function endPointer(e) {
     if (drag.mode === 'stamp' && ghost) {
       hoverCell = cellAt(x, y); refreshGhost();
       for (const [gx, gy] of ghost.cells) live.add(key(ghost.x + gx, ghost.y + gy));
+      edited = true;
       hideNote();
       dirty = true;
     } else if (drag.mode === 'follow') {
       startFollow(...toWorld(x, y));
     }
   }
+  if (drag.mode === 'copy' && e.type === 'pointerup') finishCopy();
   if (drag.mode === 'erase') {
     if (drag.removed.length) { undoStack.push(drag.removed); if (undoStack.length > 30) undoStack.shift(); updateUndo(); }
     if (e.pointerType === 'touch') { eraserAt = null; dirty = true; }   // finger lifted: hide the circle
@@ -740,18 +836,29 @@ function updateFollow(stepsDone) {
    Buttons & keys
    ===================================================================== */
 runBtn.onclick = () => setRunning(!running);
-$('stepBtn').onclick = () => { setRunning(false); step(); updateFollow(1); dirty = true; };
+$('stepBtn').onclick = () => { setRunning(false); maybeSnapshot(); step(); updateFollow(1); dirty = true; };
+$('resetBtn').onclick = resetBoard;
+$('pasteBtn').onclick = startPaste;
+$('origBtn').onclick = pasteWhereItWas;
+$('pasteBtn').disabled = !clip;
 $('speed').oninput = e => { speedIdx = +e.target.value; updateSpeedLabel(); };
 document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   setTool(b.dataset.tool);
   if (b.dataset.tool === 'follow') showNote('Follow', 'Click a glider or spaceship to ride along with it.', 5000);
   if (b.dataset.tool === 'draw') showNote('Draw', 'Click or drag to add cells. Start on a live cell to erase instead.', 5000);
   if (b.dataset.tool === 'erase') startErase();
+  if (b.dataset.tool === 'copy') startCopy();
 });
 $('rotateBtn').onclick = () => { if (stamp) { stamp.rot++; refreshGhost(); } };
 $('flipBtn').onclick = () => { if (stamp) { stamp.flip = !stamp.flip; refreshGhost(); } };
 $('doneBtn').onclick = () => { setTool('move'); hideNote(); };
 $('undoBtn').onclick = undoErase;
+function startCopy() {
+  setTool('copy');
+  setRunning(false);
+  setAuto(false);
+  showNote('Copy', (TOUCH ? 'Drag a finger' : 'Drag') + ' to draw a box around the cells you want to copy. The board is paused so nothing moves while you do.', 7000);
+}
 function startErase() {
   setTool('erase');
   setRunning(false);
@@ -763,7 +870,7 @@ function startErase() {
 }
 $('fitBtn').onclick = () => { fitNow(); };
 $('autoBtn').onclick = () => { setAuto(!autoZoom); if (autoZoom) { follow = null; } };
-$('clearBtn').onclick = () => { live = new Set(); gen = 0; follow = null; dirty = true; setAuto(false); };
+$('clearBtn').onclick = () => { live = new Set(); gen = 0; follow = null; edited = true; dirty = true; setAuto(false); };
 $('aboutBtn').onclick = () => $('about').classList.add('open');
 $('aboutClose').onclick = () => $('about').classList.remove('open');
 $('about').addEventListener('click', e => { if (e.target.id === 'about') $('about').classList.remove('open'); });
@@ -774,7 +881,10 @@ window.addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === ' ') { e.preventDefault(); if (!e.repeat) setRunning(!running); }
-  else if (k === 'n' || k === 'arrowright') { setRunning(false); step(); updateFollow(1); dirty = true; }
+  else if (k === 'n' || k === 'arrowright') { setRunning(false); maybeSnapshot(); step(); updateFollow(1); dirty = true; }
+  else if (k === 'c') startCopy();
+  else if (k === 'v') startPaste();
+  else if (k === '0') resetBoard();
   else if (k === 'r' && stamp) { stamp.rot++; refreshGhost(); }
   else if (k === 'f' && stamp) { stamp.flip = !stamp.flip; refreshGhost(); }
   else if (k === 'escape') { $('about').classList.remove('open'); setTool('move'); noteEl.classList.add('hidden'); }
