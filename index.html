@@ -85,9 +85,11 @@
   .toolbar label { font-size: .9rem; color: var(--mist); display: flex; align-items: center; gap: 6px; }
   .toolbar input[type=range] { width: 110px; accent-color: var(--brass); }
   #speedLabel { min-width: 58px; font-variant-numeric: tabular-nums; color: var(--cream); }
-  .stampgroup, .erasegroup { display: none; border-color: rgba(201,151,63,.6); }
-  body.stamping .stampgroup, body.erasing .erasegroup { display: flex; }
-  #undoBtn:disabled { opacity: .4; cursor: default; }
+  .stampgroup, .undogroup { display: none; border-color: rgba(201,151,63,.6); }
+  body.stamping .stampgroup, body.editing .undogroup { display: flex; }
+  #placeBtn { display: none; background: var(--brass); border-color: var(--brass); color: var(--deep); }
+  body.touch #placeBtn { display: inline-block; }
+  .undo:disabled { opacity: .4; cursor: default; }
   #doneBtn { background: rgba(201,151,63,.22); border-color: rgba(201,151,63,.7); }
 
   /* ---------- Board ---------- */
@@ -133,6 +135,7 @@
     /* compact rows: everything visible, no sliding, groups kept intact */
     .toolbar { gap: 6px; padding-top: 6px; padding-bottom: 6px; justify-content: center; }
     .group { padding: 3px; gap: 4px; }
+    .stampgroup { flex-wrap: wrap; justify-content: center; max-width: 100%; }   /* the placing box may take two lines */
     .toolbar button, .toolbar select { padding: 4px 8px; font-size: .86rem; min-height: 32px; white-space: nowrap; }
     .toolbar button.primary { min-width: 70px; }
     .toolbar label { white-space: nowrap; }
@@ -204,11 +207,13 @@
     <button id="rotateBtn" title="Rotate (R)">⟳ Rotate</button>
     <button id="flipBtn" title="Flip (F)">⇋ Flip</button>
     <button id="origBtn" title="Put the copy back exactly where you copied it from">⌖ Where it was</button>
-    <button id="doneBtn" title="Finish placing (Esc)">✓ Done</button>
+    <button id="placeBtn" title="Put it down where the preview is">✓ Place</button>
+    <button id="doneBtn" title="Finish placing (Esc)">Done</button>
+    <button id="undoBtn2" class="undo" title="Take back the last placement (⌘Z / Ctrl-Z)" disabled>↶ Undo</button>
   </div>
-  <!-- shown only while erasing -->
-  <div class="group erasegroup" role="group" aria-label="Erasing">
-    <button id="undoBtn" title="Put back the last sweep (⌘Z / Ctrl-Z)" disabled>↶ Undo</button>
+  <!-- shown while drawing, erasing or placing -->
+  <div class="group undogroup" role="group" aria-label="Undo">
+    <button id="undoBtn" class="undo" title="Take back the last change (⌘Z / Ctrl-Z)" disabled>↶ Undo</button>
   </div>
 </div>
 
@@ -233,7 +238,8 @@
     <p>Those three rules produce gliders that crawl across the board, guns that fire them forever, and tiny seeds that churn for thousands of generations before they settle.</p>
     <h3>How to use it</h3>
     <ul>
-      <li>Pick a pattern from the menu and tap or click the board to drop it in, as many times as you like. <b>Rotate</b> and <b>Flip</b> turn it (or <kbd>R</kbd> and <kbd>F</kbd>), and <b>Done</b> (or <kbd>Esc</kbd>) finishes.</li>
+      <li>Pick a pattern from the menu and a dim preview appears. With a mouse, the preview follows the pointer and a click drops it in. On a phone or tablet, drag the preview into position and tap <b>✓ Place</b>. <b>Rotate</b> and <b>Flip</b> turn it (or <kbd>R</kbd> and <kbd>F</kbd>), and <b>Done</b> (or <kbd>Esc</kbd>) finishes.</li>
+      <li><b>Undo</b> takes back the last thing you drew, erased or placed (up to 30 steps). Running the board starts a fresh history.</li>
       <li>Scroll or pinch to zoom, and drag to move around. The board has no edges.</li>
       <li><b>Draw</b> lets you add or remove single squares. <b>Erase</b> pauses the board and gives you a round eraser: sweep it across to wipe out cells (zoom in for a small eraser, out for a big one), and <b>Undo</b> puts back the last sweep. <b>Follow</b> lets you click a glider or spaceship and ride along with it.</li>
       <li><b>Copy</b>: drag a box around some cells. <b>Paste</b> then lets you drop copies anywhere, turned or flipped, or tap <b>Where it was</b> to put it back exactly. Your copy is remembered on this device until you copy something else.</li>
@@ -440,7 +446,7 @@ function render() {
   }
 
   // stamp preview
-  if (ghost && hoverCell) {
+  if (ghost && (hoverCell || (stamp && stamp.at))) {
     ctx.fillStyle = 'rgba(201,151,63,.55)';
     const px = Math.max(s - gap, 1);
     for (const [gx, gy] of ghost.cells) {
@@ -509,6 +515,7 @@ let speedIdx = 4;
 
 const $ = id => document.getElementById(id);
 const TOUCH = window.matchMedia && matchMedia('(hover: none)').matches;   // phones and tablets: no Esc or R/F keys
+if (TOUCH) document.body.classList.add('touch');
 const runBtn = $('runBtn'), statsEl = $('stats'), noteEl = $('note'), picker = $('picker');
 
 function markEdited() { edited = true; }
@@ -532,6 +539,7 @@ function setTool(t) {
   selBox = null;
   if (t !== 'stamp') document.body.classList.remove('pasting');
   document.body.classList.toggle('erasing', t === 'erase');
+  document.body.classList.toggle('editing', t === 'draw' || t === 'erase');   // placing has its own Undo in the placing box
   if (t !== 'erase') eraserAt = null;
   if (t !== 'stamp') { stamp = null; ghost = null; document.body.classList.remove('stamping'); picker.value = ''; }
   if (t !== 'follow') follow = null;
@@ -585,21 +593,44 @@ picker.addEventListener('change', () => {
     document.body.classList.remove('pasting');
     picker.value = v;
     stamp = { id, rot: 0, flip: false };
+    if (TOUCH) stamp.at = startAnchor();
     document.body.classList.add('stamping');
     refreshGhost();
     const p = BY_ID[id];
     showNote(p.name, p.note + '<br><em>' + (TOUCH
-      ? 'Tap the board to drop it in. Rotate and Flip turn it; tap Done when you’re finished.'
-      : 'Click the board to drop it in · R rotate · F flip · Esc or Done when finished') + '</em>', 12000);
+      ? 'Drag the dim preview into place, then tap ✓ Place.'
+      : 'Click the board to drop it in · R rotate · F flip · ⌘Z undo · Esc or Done when finished') + '</em>', 12000);
     picker.blur();
   }
 });
+const stampCells = () => stamp.id === 'clip' ? clip.cells : BY_ID[stamp.id].base;
 function refreshGhost() {
   if (!stamp) { ghost = null; return; }
-  const o = orient(stamp.id === 'clip' ? clip.cells : BY_ID[stamp.id].base, stamp.rot, stamp.flip);
-  const c = hoverCell || [Math.floor(cam.x), Math.floor(cam.y)];
+  const o = orient(stampCells(), stamp.rot, stamp.flip);
+  // touch screens: the preview sits at stamp.at (its centre) until dragged; with a mouse it follows the pointer
+  const c = stamp.at || hoverCell || [Math.floor(cam.x), Math.floor(cam.y)];
   ghost = { cells: o.cells, w: o.w, h: o.h, x: c[0] - Math.floor(o.w / 2), y: c[1] - Math.floor(o.h / 2) };
   dirty = true;
+}
+// where a touch-screen preview first appears: a copy goes back over the spot it came from if that is on screen,
+// otherwise everything starts in the middle of the view
+function startAnchor() {
+  if (stamp.id === 'clip') {
+    const o = orient(clip.cells, 0, false);
+    let mx = Infinity, my = Infinity; for (const [x, y] of clip.cells) { mx = Math.min(mx, x); my = Math.min(my, y); }
+    const ax = clip.ox + mx + Math.floor(o.w / 2), ay = clip.oy + my + Math.floor(o.h / 2);
+    const sx = (ax - cam.x) * cam.s + W / 2, sy = (ay - cam.y) * cam.s + H / 2;
+    if (sx > 0 && sx < W && sy > 0 && sy < H) return [ax, ay];
+  }
+  return [Math.floor(cam.x), Math.floor(cam.y)];
+}
+// put the pattern down where the preview is, remembering it for Undo
+function placeGhost() {
+  if (!ghost) return;
+  const added = [];
+  for (const [gx, gy] of ghost.cells) { const k = key(ghost.x + gx, ghost.y + gy); if (!live.has(k)) { live.add(k); added.push(k); } }
+  pushUndo(added, []);
+  edited = true; hideNote(); dirty = true;
 }
 
 /* =====================================================================
@@ -618,12 +649,14 @@ function zoomAt(sx, sy, factor) {
 }
 function localXY(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
 
-function paintLine(a, b, value) {
+function paintLine(a, b, value, rec) {
   let [x0, y0] = a; const [x1, y1] = b;
   const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
   let err = dx + dy;
   for (;;) {
-    const k = key(x0, y0); value ? live.add(k) : live.delete(k); edited = true;
+    const k = key(x0, y0);
+    if (value && !live.has(k)) { live.add(k); edited = true; if (rec) rec.added.push(k); }
+    else if (!value && live.has(k)) { live.delete(k); edited = true; if (rec) rec.removed.push(k); }
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
     if (e2 >= dy) { err += dy; x0 += sx; }
@@ -682,23 +715,33 @@ function startPaste() {
   setTool('stamp');
   picker.value = '';
   stamp = { id: 'clip', rot: 0, flip: false };
+  if (TOUCH) stamp.at = startAnchor();
   document.body.classList.add('stamping', 'pasting');
   refreshGhost();
   showNote('Your copy', `${clip.cells.length.toLocaleString()} cells.<br><em>` + (TOUCH
-    ? 'Tap the board to drop it in. Rotate and Flip turn it; Where it was puts it back exactly; tap Done when finished.'
-    : 'Click the board to drop it in · R rotate · F flip · Where it was puts it back exactly · Esc or Done when finished') + '</em>', 12000);
+    ? 'Drag the dim preview into place and tap ✓ Place, or tap Where it was.'
+    : 'Click the board to drop it in · R rotate · F flip · Where it was puts it back exactly · ⌘Z undo · Esc or Done when finished') + '</em>', 12000);
 }
 function pasteWhereItWas() {
   if (!clip) return;
-  for (const [x, y] of clip.cells) live.add(key(clip.ox + x, clip.oy + y));
+  const added = [];
+  for (const [x, y] of clip.cells) { const k = key(clip.ox + x, clip.oy + y); if (!live.has(k)) { live.add(k); added.push(k); } }
+  pushUndo(added, []);
   edited = true; hideNote(); dirty = true;
 }
 try { const saved = JSON.parse(localStorage.getItem('life.clip') || 'null'); if (saved && saved.cells && saved.cells.length) clip = saved; } catch (err) {}
 
-function updateUndo() { $('undoBtn').disabled = !undoStack.length; undoChanged = false; }
-function undoErase() {
+function updateUndo() { document.querySelectorAll('.undo').forEach(b => b.disabled = !undoStack.length); undoChanged = false; }
+// each entry: { add: [cells that were added], del: [cells that were removed] }
+function pushUndo(add, del) {
+  if (!add.length && !del.length) return;
+  undoStack.push({ add, del }); if (undoStack.length > 30) undoStack.shift();
+  updateUndo();
+}
+function undoLast() {
   const last = undoStack.pop(); if (!last) return;
-  for (const k of last) live.add(k);
+  for (const k of last.add) live.delete(k);
+  for (const k of last.del) live.add(k);
   edited = true; updateUndo(); dirty = true;
 }
 
@@ -709,7 +752,7 @@ canvas.addEventListener('pointerdown', e => {
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
-    if (drag && drag.removed && drag.removed.length) { undoStack.push(drag.removed); updateUndo(); }   // second finger: keep what was erased undoable
+    if (drag && (drag.mode === 'erase' || drag.mode === 'draw')) pushUndo(drag.added || [], drag.removed || []);   // second finger: keep the stroke so far undoable
     eraserAt = null;
     drag = null; return;
   }
@@ -720,7 +763,13 @@ canvas.addEventListener('pointerdown', e => {
     const c = cellAt(x, y);
     drag.value = !live.has(key(c[0], c[1]));
     drag.lastCell = c;
-    paintLine(c, c, drag.value);
+    drag.added = []; drag.removed = [];
+    paintLine(c, c, drag.value, drag);
+  }
+  if (mode === 'stamp' && e.pointerType === 'touch') {
+    // finger: slide the preview, keeping the same offset from the finger so it never hides under it
+    if (!stamp.at) stamp.at = cellAt(x, y);
+    drag.at0 = stamp.at.slice(); drag.c0 = cellAt(x, y);
   }
   if (mode === 'copy') {
     drag.c0 = cellAt(x, y);
@@ -747,6 +796,7 @@ canvas.addEventListener('pointermove', e => {
     return;
   }
   hoverCell = cellAt(x, y);
+  if (stamp && stamp.at && e.pointerType === 'mouse' && !drag) stamp.at = null;   // a mouse took over: follow the pointer
   if (stamp) refreshGhost();
   if (tool === 'erase' && (drag || e.pointerType === 'mouse' || e.pointerType === 'pen')) { eraserAt = [x, y]; dirty = true; }
   if (!drag) return;
@@ -757,10 +807,15 @@ canvas.addEventListener('pointermove', e => {
     dirty = true;
   } else if (drag.mode === 'draw') {
     const c = cellAt(x, y);
-    paintLine(drag.lastCell, c, drag.value);
+    paintLine(drag.lastCell, c, drag.value, drag);
     drag.lastCell = c;
   } else if (drag.mode === 'erase') {
     eraseStroke(drag.lastX, drag.lastY, x, y, drag.removed);
+  } else if (drag.mode === 'stamp' && drag.at0) {
+    const c = cellAt(x, y);
+    stamp.at = [drag.at0[0] + c[0] - drag.c0[0], drag.at0[1] + c[1] - drag.c0[1]];
+    if (drag.moved) hideNote();
+    refreshGhost();
   } else if (drag.mode === 'copy') {
     const c = cellAt(x, y);
     selBox = { x0: Math.min(drag.c0[0], c[0]), y0: Math.min(drag.c0[1], c[1]), x1: Math.max(drag.c0[0], c[0]), y1: Math.max(drag.c0[1], c[1]) };
@@ -775,18 +830,16 @@ function endPointer(e) {
   const [x, y] = localXY(e);
   if (!drag.moved && e.type === 'pointerup') {
     if (drag.mode === 'stamp' && ghost) {
-      hoverCell = cellAt(x, y); refreshGhost();
-      for (const [gx, gy] of ghost.cells) live.add(key(ghost.x + gx, ghost.y + gy));
-      edited = true;
-      hideNote();
-      dirty = true;
+      if (drag.at0) { stamp.at = cellAt(x, y); refreshGhost(); }        // finger tap: move the preview there, don't place yet
+      else { hoverCell = cellAt(x, y); refreshGhost(); placeGhost(); }  // mouse click: place it
     } else if (drag.mode === 'follow') {
       startFollow(...toWorld(x, y));
     }
   }
   if (drag.mode === 'copy' && e.type === 'pointerup') finishCopy();
+  if (drag.mode === 'draw') pushUndo(drag.added, drag.removed);
   if (drag.mode === 'erase') {
-    if (drag.removed.length) { undoStack.push(drag.removed); if (undoStack.length > 30) undoStack.shift(); updateUndo(); }
+    pushUndo([], drag.removed);
     if (e.pointerType === 'touch') { eraserAt = null; dirty = true; }   // finger lifted: hide the circle
   }
   canvas.classList.remove('dragging');
@@ -840,6 +893,7 @@ $('stepBtn').onclick = () => { setRunning(false); maybeSnapshot(); step(); updat
 $('resetBtn').onclick = resetBoard;
 $('pasteBtn').onclick = startPaste;
 $('origBtn').onclick = pasteWhereItWas;
+$('placeBtn').onclick = placeGhost;
 $('pasteBtn').disabled = !clip;
 $('speed').oninput = e => { speedIdx = +e.target.value; updateSpeedLabel(); };
 document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
@@ -852,7 +906,8 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
 $('rotateBtn').onclick = () => { if (stamp) { stamp.rot++; refreshGhost(); } };
 $('flipBtn').onclick = () => { if (stamp) { stamp.flip = !stamp.flip; refreshGhost(); } };
 $('doneBtn').onclick = () => { setTool('move'); hideNote(); };
-$('undoBtn').onclick = undoErase;
+$('undoBtn').onclick = undoLast;
+$('undoBtn2').onclick = undoLast;
 function startCopy() {
   setTool('copy');
   setRunning(false);
@@ -866,7 +921,7 @@ function startErase() {
   showNote('Erase', (TOUCH
     ? 'Drag a finger to wipe out cells. Two fingers still move and zoom the board.'
     : 'Hold the mouse button and sweep to wipe out cells.')
-    + ' Zoom in for a small eraser, out for a big one. <b>Undo</b> puts back the last sweep; press <b>Run</b> when you’re done.', 9000);
+    + ' Zoom in for a small eraser, out for a big one. <b>Undo</b> takes back the last sweep; press <b>Run</b> when you’re done.', 9000);
 }
 $('fitBtn').onclick = () => { fitNow(); };
 $('autoBtn').onclick = () => { setAuto(!autoZoom); if (autoZoom) { follow = null; } };
@@ -877,7 +932,7 @@ $('about').addEventListener('click', e => { if (e.target.id === 'about') $('abou
 
 let spaceHeld = false;
 window.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && tool === 'erase' && undoStack.length) { e.preventDefault(); undoErase(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && undoStack.length) { e.preventDefault(); undoLast(); return; }
   if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === ' ') { e.preventDefault(); if (!e.repeat) setRunning(!running); }
